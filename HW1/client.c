@@ -100,12 +100,12 @@ cleanup:
 error_code add_file(char* path_to_file, char* file_name) {
     byte file_data[MAX_FILE_SIZE] = {0};
     error_code read_error = SUCCESS;
-    int data_length = 0;
+    unsigned short data_length = 0;
     error_code result = SUCCESS;
     error_code remote_result = SUCCESS;
     command_type command = ADD_FILE;
 
-    read_error = read_file(path_to_file, &file_data[0], (unsigned short*)&data_length);
+    read_error = read_file(path_to_file, &file_data[0], &data_length);
     VERIFY_SUCCESS(read_error);
 
     result = send_all(server_connection, (byte*)&command, sizeof(command));

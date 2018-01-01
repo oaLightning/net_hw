@@ -30,7 +30,7 @@ error_code send_all(int socket, byte* data, unsigned short data_length) {
 
 error_code send_string(int socket, char* message) {
     error_code error = SUCCESS;
-    int length = strlen(message);
+    unsigned short length = (unsigned short)strlen(message);
     error = send_all(socket, (byte*)&length, sizeof(length));
     if (SUCCESS != error) {
         return error;
@@ -67,7 +67,7 @@ error_code recv_all(int socket, byte* data, unsigned short data_length) {
 }
 
 error_code recv_string(int socket, char* buffer) {
-    int string_length = 0;
+    unsigned short string_length = 0;
     error_code error = recv_all(socket, (byte*)&string_length, sizeof(string_length));
     if (SUCCESS != error) {
         return error;
@@ -97,6 +97,10 @@ error_code read_file(char* path, byte* data, unsigned short* data_length) {
     VERIFY_CONDITION(result == *data_length, error, FAILED_TO_READ_FILE, "Failed to read all the file's data\n");
 
 cleanup:
+    if (NULL != fp) {
+        fclose(fp);
+    }
+
     return error;
 }
 
@@ -112,6 +116,10 @@ error_code write_file(char* path, byte* data, unsigned short data_length) {
     VERIFY_CONDITION(result == data_length, error, FAILED_TO_WRITE_FILE, "Failed to write all the file's data\n");
 
 cleanup:
+    if (NULL != fp) {
+        fclose(fp);
+    }
+
     return error;
 }
 

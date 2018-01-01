@@ -9,7 +9,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <errno.h>
-#include <pthread.h>
+#include <fcntl.h>
 
 #include "errors.h"
 #include "io_utils.h"
@@ -73,8 +73,14 @@ char* files_directory = NULL;
 unsigned short port = 1337;
 
 void zero_user_data(user_data* data) {
-    memset(data, sizeof(user_data), 0);
+    memset(data, 0, sizeof(*data));
     data->socket = -1;
+    data->current_command_data.command = INVALID_COMMAND;
+}
+
+void clear_user_command(int user_index) {
+    memset(&user_list[user_index].current_command_data, 0, sizeof(user_list[user_index].current_command_data));
+    user_list[user_index].current_command_data.command = INVALID_COMMAND;
 }
 
 void zero_all_user_data() {
@@ -164,6 +170,7 @@ error_code delete_file(int user_index, char* file_name) {
     error_code error = SUCCESS;
     int unlink_result = 0;
 
+    printf("Deleting file %s for %d\n", file_name, user_index);
     get_file_path(user_index, file_name, full_file_path);
     unlink_result = unlink(full_file_path);
     if (0 != unlink_result) {
@@ -178,13 +185,14 @@ error_code delete_file(int user_index, char* file_name) {
 }
 
 error_code add_file(int user_index, char* file_name, byte* data, unsigned short data_length) {
+    printf("Adding file %s for %d with length %d and data %s\n", file_name, user_index, data_length, (char*)data);
     char full_file_path[MAX_FILE_PATH] = {0};
     error_code write_error = SUCCESS;
 
     get_file_path(user_index, file_name, full_file_path);
     write_error = write_file(full_file_path, data, data_length);
 
-    return send_finished(user_list[user_index].socket, write_error);;
+    return send_finished(user_list[user_index].socket, write_error);
 }
 
 error_code get_file(int user_index, char* file_name) {
@@ -323,7 +331,7 @@ cleanup:
 
 void cleanup_client(int user_index) {
     close(user_list[user_index].socket);
-    printf("User disconnected\n");
+    printf("Removing user %d\n", user_index);
     zero_user_data(&(user_list[user_index]));
 }
 
@@ -337,6 +345,7 @@ void handle_new_client(int fd) {
     for (i = 0; i < MAX_CLIENTS; i++) {
         if (-1 == user_list[i].socket) {
             user_list[i].socket = fd;
+            break;
         }
     }
 
@@ -357,35 +366,47 @@ error_code receive_authentication_information(int user_index, bool* done) {
     *done = false;
 
     if (0 == user_list[user_index].username_length) {
-        result = recv(fd, &user_list[user_index].username_length, sizeof(user_list[user_index].username_length), 0);
+        result = recv(fd, &user_list[user_index].username_length, sizeof(user_list[user_index].username_length), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 1\n");
             return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
         }
     }
     if (strlen(user_list[user_index].username) != user_list[user_index].username_length) {
         diff = user_list[user_index].username_length - strlen(user_list[user_index].username);
         buffer_start = (byte*)&user_list[user_index].username + strlen(user_list[user_index].username);
-        result = recv(fd, buffer_start, diff, 0);
+        result = recv(fd, buffer_start, diff, MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 2\n");
             return errors;
         }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
     }
     if (0 == user_list[user_index].password_length) {
-        result = recv(fd, &user_list[user_index].password_length, sizeof(user_list[user_index].password_length), 0);
+        result = recv(fd, &user_list[user_index].password_length, sizeof(user_list[user_index].password_length), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 3\n");
             return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
         }
     }
     if (strlen(user_list[user_index].password) != user_list[user_index].password_length) {
         diff = user_list[user_index].password_length - strlen(user_list[user_index].password);
         buffer_start = (byte*)&user_list[user_index].password + strlen(user_list[user_index].password);
-        result = recv(fd, buffer_start, diff, 0);
+        result = recv(fd, buffer_start, diff, MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 4\n");
             return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
         }
         errors = handle_user_authentication(user_index);
         VERIFY_SUCCESS(errors);
@@ -399,7 +420,7 @@ cleanup:
 
 error_code get_list_files_params(int user_index) {
     error_code errors = list_files(user_index);
-    user_list[user_index].current_command_data.command = INVALID_COMMAND;
+    clear_user_command(user_index);
     return errors;
 }
 
@@ -411,23 +432,29 @@ error_code get_delete_file_params(int user_index) {
     unsigned short diff = 0;
 
     if (0 == command_data->name_length) {
-        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), 0);
+        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 6\n");
             return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
         }
     }
     if (strlen(command_data->file_name) != command_data->name_length) {
         diff = command_data->name_length - strlen(command_data->file_name);
         buffer_start = (byte*)&command_data->file_name + strlen(command_data->file_name);
-        result = recv(user_list[user_index].socket, buffer_start, diff, 0);
+        result = recv(user_list[user_index].socket, buffer_start, diff, MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 7\n");
             return errors;
         }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
     }
     errors = delete_file(user_index, command_data->file_name);
-    user_list[user_index].current_command_data.command = INVALID_COMMAND;
+    clear_user_command(user_index);
 cleanup:
     return errors;
 }
@@ -440,41 +467,57 @@ error_code get_add_file_params(int user_index) {
     unsigned short diff = 0;
 
     if (0 == command_data->name_length) {
-        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), 0);
+        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 10\n");
             return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
         }
     }
     if (strlen(command_data->file_name) != command_data->name_length) {
         diff = command_data->name_length - strlen(command_data->file_name);
         buffer_start = (byte*)&command_data->file_name + strlen(command_data->file_name);
-        result = recv(user_list[user_index].socket, buffer_start, diff, 0);
+        result = recv(user_list[user_index].socket, buffer_start, diff, MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 11\n");
             return errors;
         }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
     }
 
     if (0 == command_data->data_length) {
-        result = recv(user_list[user_index].socket, &command_data->data_length, sizeof(command_data->data_length), 0);
+        result = recv(user_list[user_index].socket, &command_data->data_length, sizeof(command_data->data_length), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 12\n");
             return errors;
         }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
     }
     if (command_data->received_data != command_data->data_length) {
         diff = command_data->data_length - command_data->received_data;
-        buffer_start = (byte*)&command_data->file_data + command_data->received_data;
-        result = recv(user_list[user_index].socket, buffer_start, diff, 0);
+        buffer_start = &(command_data->file_data[0]) + command_data->received_data;
+        result = recv(user_list[user_index].socket, buffer_start, diff, MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 13\n");
+            return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
+        command_data->received_data += result;
+        if (command_data->received_data != command_data->data_length) {
             return errors;
         }
     }
 
     errors = add_file(user_index, command_data->file_name, command_data->file_data, command_data->data_length);
-    user_list[user_index].current_command_data.command = INVALID_COMMAND;
+    clear_user_command(user_index);
 cleanup:
     return errors;
 }
@@ -487,23 +530,29 @@ error_code get_get_file_params(int user_index) {
     unsigned short diff = 0;
 
     if (0 == command_data->name_length) {
-        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), 0);
+        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 8\n");
             return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
         }
     }
     if (strlen(command_data->file_name) != command_data->name_length) {
         diff = command_data->name_length - strlen(command_data->file_name);
         buffer_start = (byte*)&command_data->file_name + strlen(command_data->file_name);
-        result = recv(user_list[user_index].socket, buffer_start, diff, 0);
+        result = recv(user_list[user_index].socket, buffer_start, diff, MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 9\n");
             return errors;
         }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
     }
     errors = get_file(user_index, command_data->file_name);
-    user_list[user_index].current_command_data.command = INVALID_COMMAND;
+    clear_user_command(user_index);
 cleanup:
     return errors;
 }
@@ -521,10 +570,14 @@ void read_socket_and_handle(int user_index) {
         }
     }
     if (INVALID_COMMAND == user_list[user_index].current_command_data.command) {
-        result = recv(user_list[user_index].socket, &user_list[user_index].current_command_data.command, sizeof(user_list[user_index].current_command_data.command), 0);
+        result = recv(user_list[user_index].socket, &user_list[user_index].current_command_data.command, sizeof(user_list[user_index].current_command_data.command), MSG_DONTWAIT);
         if (0 > result) {
             VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 5\n");
             return;
+        }
+        if (0 == result) {
+            errors = CLIENT_DISCONNECTED;
+            goto cleanup;    
         }
     }
     switch (user_list[user_index].current_command_data.command) {

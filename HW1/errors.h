@@ -36,6 +36,7 @@ typedef enum {
 	SELECT_ERROR,
 	SETOPT_FAILURE,
 	RECV_NO_WAIT_FAILED,
+	CLIENT_DISCONNECTED,
 } error_code;
 
 #define VERIFY_SUCCESS(error_code)          \
