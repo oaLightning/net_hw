@@ -10,24 +10,23 @@
 typedef unsigned char byte;
 
 typedef enum {
-	LIST_FILES,
-	DELETE_FILE,
-	ADD_FILE,
-	GET_FILE,
+    LIST_FILES,
+    DELETE_FILE,
+    ADD_FILE,
+    GET_FILE,
 
-	INVALID_COMMAND = -1,
+    INVALID_COMMAND = -1,
 } command_type; 
 
 #define GREETING_MESSAGE ("Welcome! Please log in")
 #define LOGIN_ERROR_MESSAGE ("User or password incorrect, terminating")
 
 error_code send_all(int socket, byte* data, unsigned short data_length);
+error_code recv_all(int socket, byte* data, unsigned short data_length);
 
 error_code send_string(int socket, char* message);
 
 error_code send_finished(int socket, error_code status);
-
-error_code recv_all(int socket, byte* data, unsigned short data_length);
 
 error_code recv_string(int socket, char* buffer);
 
