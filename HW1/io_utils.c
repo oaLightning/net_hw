@@ -38,7 +38,7 @@ error_code send_string(int socket, char* message) {
     return send_all(socket, (byte*)message, strlen(message));
 }
 
-error_code send_finished(int socket, error_code status) {
+error_code send_error_code(int socket, error_code status) {
     return send_all(socket, (byte*)&status, sizeof(status));
 }
 
@@ -104,12 +104,13 @@ cleanup:
     return error;
 }
 
-error_code write_file(char* path, byte* data, unsigned short data_length) {
+error_code write_file(char* path, byte* data, unsigned short data_length, bool append) {
     error_code error = SUCCESS;
     FILE* fp = NULL;
     size_t result = 0;
+    char* open_options = (append) ? ("a+") : ("w");
 
-    fp = fopen(path, "w");
+    fp = fopen(path, open_options);
     VERIFY_CONDITION(NULL != fp, error, FAIL_OPEN_WRITE_FILE, "Failed to open file for writing\n");
 
     result = fwrite(data, sizeof(byte), data_length, fp);

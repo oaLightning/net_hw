@@ -161,7 +161,7 @@ error_code get_file(char* file_name, char* path_to_save) {
     send_error = recv_all(server_connection, &file_data[0], data_length);
     VERIFY_SUCCESS(send_error);
 
-    write_error = write_file(path_to_save, file_data, data_length);
+    write_error = write_file(path_to_save, file_data, data_length, false);
     if (SUCCESS == write_error) {
         printf("File saved locally at \"%s\"\n", path_to_save);
     } else {
@@ -170,6 +170,68 @@ error_code get_file(char* file_name, char* path_to_save) {
 
 cleanup:
     return send_error;
+}
+
+error_code users_online() {
+    error_code errors = SUCCESS;
+    command_type command = GET_FILE;
+    char returned_users[MAX_USERS_LIST_LENGTH] = {0};
+
+    errors = send_all(server_connection, (byte*)&command, sizeof(command));
+    VERIFY_SUCCESS(errors);
+
+    errors = recv_string(server_connection, &returned_users[0]);
+    VERIFY_SUCCESS(errors);
+
+    printf("online users: %s\n", returned_users);
+
+cleanup:
+    return errors;
+}
+
+error_code send_msg(char* dest_user, char* msg) {
+    error_code errors = SUCCESS;
+    command_type command = SEND_MSG;
+
+    errors = send_all(server_connection, (byte*)&command, sizeof(command));
+    VERIFY_SUCCESS(errors);
+
+    errors = send_string(server_connection, dest_user);
+    VERIFY_SUCCESS(errors);
+
+    errors = send_string(server_connection, msg);
+    VERIFY_SUCCESS(errors);
+
+cleanup:
+    return errors;
+}
+
+error_code read_msgs() {
+    error_code errors = SUCCESS;
+    command_type command = READ_MSGS;
+    unsigned short length_or_end = 0;
+    char returned_msg[MAX_FORMATTED_MSG_LENGTH] = {0};
+
+    errors = send_all(server_connection, (byte*)&command, sizeof(command));
+    VERIFY_SUCCESS(errors);
+
+    while (true) {
+        errors = recv_all(server_connection, (byte*)&length_or_end, sizeof(length_or_end));
+        VERIFY_SUCCESS(errors);
+
+        if (END_MSG_MAGIC == length_or_end) {
+            break;
+        }
+
+        errors = recv_all(server_connection, (byte*)&returned_msg[0], (unsigned short)length_or_end);
+        VERIFY_SUCCESS(errors);
+
+        printf("%s\n", returned_msg);
+        memset(returned_msg, 0, sizeof(returned_msg));
+    }
+
+cleanup:
+    return errors;
 }
 
 error_code get_and_execute_command() {
@@ -218,6 +280,26 @@ error_code get_and_execute_command() {
             char* path_to_save = get_next_word(file_name);
             make_last_word(path_to_save);
             return get_file(file_name, path_to_save);
+        }
+        case 'u': {
+            if (!starts_with("users_online", cmd)) {
+                goto default_case;
+            }
+            return users_online();
+        }
+        case 'm': {
+            if (!starts_with("msg", cmd)) {
+                goto default_case;
+            }
+            char* user_name = get_next_word(cmd);
+            char* data = get_next_word(user_name);
+            return send_msg(user_name, data);
+        }
+        case 'r': {
+            if (!starts_with("read_msgs", cmd)) {
+                goto default_case;
+            }
+            return read_msgs();
         }
         case 'q': {
             if (starts_with("quit", cmd)) {

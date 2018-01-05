@@ -43,12 +43,25 @@ typedef struct {
     char file_name[MAX_FILE_PATH];
 } get_file_data;
 typedef struct {
+} online_users_data;
+typedef struct {
+    unsigned short name_length;
+    unsigned short msg_length;
+    char user_name[MAX_USER_LENGTH];
+    char msg_data[MAX_MSG_LENGTH];
+} send_msg_data;
+typedef struct {
+} read_msgs_data;
+typedef struct {
     command_type command;
     union {
         list_files_data list;
         delete_file_data delete;
         add_file_data add;
         get_file_data get;
+        online_users_data users;
+        send_msg_data send;
+        read_msgs_data read;
     } specific_data;
 } command_data;
 
@@ -90,7 +103,7 @@ void zero_all_user_data() {
     }
 }
 
-void get_user_file_pah(char* file_name, char dest_buffer[MAX_FILE_PATH], char* user_name) {
+void get_user_file_path(char* file_name, char dest_buffer[MAX_FILE_PATH], char* user_name) {
     int current_path_offset = 0;
     strcpy(dest_buffer, files_directory);
     current_path_offset += strlen(files_directory);
@@ -104,7 +117,7 @@ void get_user_file_pah(char* file_name, char dest_buffer[MAX_FILE_PATH], char* u
 }
 
 void get_file_path(int user_index, char* file_name, char dest_buffer[MAX_FILE_PATH]) {
-    get_user_file_pah(file_name, dest_buffer, user_list[user_index].username);
+    get_user_file_path(file_name, dest_buffer, user_list[user_index].username);
 }
 
 error_code get_number_of_files(int user_index, int* files) {
@@ -129,6 +142,37 @@ cleanup:
     return error;
 }
 
+error_code save_msg(int user_index, char* dest_name, char* msg) {
+    char file_name[MAX_FILE_PATH] = {0};
+    char full_message[MAX_FORMATTED_MSG_LENGTH] = {0};
+
+    get_user_file_path("Messages_received_offline.txt", &file_name[0], dest_name);
+    snprintf(full_message, sizeof(full_message) - 1, MSG_FORMAT, user_list[user_index].username, msg);
+    return write_file(file_name, (byte*)full_message, strlen(full_message), true);
+}
+
+bool is_known_user(char* dest_name) {
+    int i = 0;
+    for (i = 0; i < MAX_CLIENTS; i++) {
+        if (0 == strcmp(dest_name, known_users[i].username)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int get_user_index(char* dest_name) {
+    int i = 0;
+    for (i = 0; i < MAX_CLIENTS; i++) {
+        if (0 == strcmp(dest_name, user_list[i].username)) {
+            return i;
+        }
+    }
+
+    return -1;   
+}
+
 error_code list_files(int user_index) {
     char full_file_path[MAX_FILE_PATH] = {0};
     DIR* dir = NULL;
@@ -142,7 +186,7 @@ error_code list_files(int user_index) {
     dir = opendir(full_file_path);
     if (NULL == dir) {
         error = FAILED_TO_OPEN_DIR;
-        return send_finished(user_list[user_index].socket, error);
+        return send_error_code(user_list[user_index].socket, error);
     } 
     while (NULL != (entry = readdir(dir))) {
         VERIFY_CONDITION(file_count < MAX_FILES_PER_CLIENT, error, TOO_MANY_FILES, "Found more files than expected in dir\n");
@@ -181,7 +225,7 @@ error_code delete_file(int user_index, char* file_name) {
         }
     }
 
-    return send_finished(user_list[user_index].socket, error);
+    return send_error_code(user_list[user_index].socket, error);
 }
 
 error_code add_file(int user_index, char* file_name, byte* data, unsigned short data_length) {
@@ -190,9 +234,9 @@ error_code add_file(int user_index, char* file_name, byte* data, unsigned short 
     error_code write_error = SUCCESS;
 
     get_file_path(user_index, file_name, full_file_path);
-    write_error = write_file(full_file_path, data, data_length);
+    write_error = write_file(full_file_path, data, data_length, false);
 
-    return send_finished(user_list[user_index].socket, write_error);
+    return send_error_code(user_list[user_index].socket, write_error);
 }
 
 error_code get_file(int user_index, char* file_name) {
@@ -206,7 +250,7 @@ error_code get_file(int user_index, char* file_name) {
     get_file_path(user_index, file_name, full_file_path);
     read_error = read_file(full_file_path, &file_data[0], &data_length);
 
-    send_error = send_finished(user_list[user_index].socket, read_error);
+    send_error = send_error_code(user_list[user_index].socket, read_error);
     if (SUCCESS != send_error) {
         return send_error;  
     }
@@ -223,12 +267,98 @@ error_code get_file(int user_index, char* file_name) {
     return send_all(user_list[user_index].socket, (byte*)&file_data, data_length);
 }
 
+error_code online_users(int user_index) {
+    char full_list[MAX_USERS_LIST_LENGTH] = {0};
+    int i = 0;
+    bool is_first = true;
+
+    for (i = 0; i < MAX_CLIENTS; i++) {
+        if (-1 != user_list[i].socket) {
+            if (!is_first) {
+                strcat(full_list, ",");
+            } else {
+                is_first = true;
+            }
+            strcat(full_list, user_list[i].username);
+        }
+    }
+    return send_string(user_list[user_index].socket, full_list);
+}
+
+error_code send_msg(int user_index, char* dest_name, char* msg) {
+    error_code error = SUCCESS;
+    int dest_user_index = 0;
+
+    VERIFY_CONDITION(is_known_user(dest_name), error, UNKOWN_USER_FOR_MESSAGE, "The received user is not known\n");
+
+    dest_user_index = get_user_index(dest_name);
+    if (-1 == dest_user_index) {
+        return save_msg(user_index, dest_name, msg);
+    }
+
+    error = send_error_code(user_list[dest_user_index].socket, MSG_MAGIC);
+    VERIFY_SUCCESS(error);
+
+    error = send_string(user_list[dest_user_index].socket, user_list[user_index].username);
+    VERIFY_SUCCESS(error);
+
+    error = send_string(user_list[dest_user_index].socket, msg);
+    VERIFY_SUCCESS(error);
+
+cleanup:
+    if (SUCCESS != error) {
+        error = save_msg(user_index, dest_name, msg);
+    }
+
+    return error;
+}
+
+error_code read_msgs(int user_index) {
+    error_code error = SUCCESS;
+    FILE* fp = NULL;
+    size_t len = 0;
+    char* line = NULL;
+    ssize_t read;
+    char msg_file_path[MAX_FILE_PATH] = {0};
+    unsigned short magic = END_MSG_MAGIC;
+
+    get_user_file_path("Messages_received_offline.txt", msg_file_path, user_list[user_index].username);
+
+    fp = fopen(msg_file_path, "r");
+    if (NULL == fp) {
+        return send_all(user_list[user_index].socket, (byte*)&magic, sizeof(magic));
+    }
+
+    while ((read = getline(&line, &len, fp)) != -1) {
+        error = send_string(user_list[user_index].socket, line);
+        VERIFY_SUCCESS(error);
+
+        free(line);
+        line = NULL;
+        len = 0;
+    }
+
+    error = send_all(user_list[user_index].socket, (byte*)&magic, sizeof(magic));
+    VERIFY_SUCCESS(error);
+
+    fclose(fp);
+    fp = NULL;
+    unlink(msg_file_path);
+
+cleanup:
+    if (NULL != fp) {
+        fclose(fp);
+    }
+
+    return error;
+}
+
 error_code make_user_directory(char* user_name) {
     char full_file_path[MAX_FILE_PATH] = {0};
     int result = 0;
     error_code error = SUCCESS;
 
-    get_user_file_pah("", full_file_path, user_name);
+    get_user_file_path("", full_file_path, user_name);
     result = mkdir(full_file_path, 0777);
     if (0 != result) {
         VERIFY_CONDITION(EEXIST == errno, error, FAILED_TO_MAKE_USER_DIR, "Failed to make the user's directory\n");
@@ -308,7 +438,7 @@ error_code handle_user_authentication(int user_index) {
     int fd = user_list[user_index].socket;
 
     authenticate_error = authenticate_user(user_index);
-    errors = send_finished(fd, authenticate_error);
+    errors = send_error_code(fd, authenticate_error);
     VERIFY_SUCCESS(errors);
 
     if (SUCCESS != authenticate_error) {
@@ -557,6 +687,77 @@ cleanup:
     return errors;
 }
 
+error_code get_online_users_params(int user_index) {
+    error_code errors = online_users(user_index);
+    clear_user_command(user_index);
+    return errors;
+}
+
+error_code get_send_msg_params(int user_index) {
+    int result = 0;
+    error_code errors = SUCCESS;
+    send_msg_data* command_data = &user_list[user_index].current_command_data.specific_data.send;
+    byte* buffer_start = NULL;
+    unsigned short diff = 0;
+
+    if (0 == command_data->name_length) {
+        result = recv(user_list[user_index].socket, &command_data->name_length, sizeof(command_data->name_length), MSG_DONTWAIT);
+        if (0 > result) {
+            VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 10\n");
+            return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
+    }
+    if (strlen(command_data->user_name) != command_data->name_length) {
+        diff = command_data->name_length - strlen(command_data->user_name);
+        buffer_start = (byte*)&command_data->user_name + strlen(command_data->user_name);
+        result = recv(user_list[user_index].socket, buffer_start, diff, MSG_DONTWAIT);
+        if (0 > result) {
+            VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 11\n");
+            return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
+    }
+
+    if (0 == command_data->msg_length) {
+        result = recv(user_list[user_index].socket, &command_data->msg_length, sizeof(command_data->msg_length), MSG_DONTWAIT);
+        if (0 > result) {
+            VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 10\n");
+            return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
+    }
+    if (strlen(command_data->msg_data) != command_data->msg_length) {
+        diff = command_data->msg_length - strlen(command_data->msg_data);
+        buffer_start = (byte*)&command_data->msg_data + strlen(command_data->msg_data);
+        result = recv(user_list[user_index].socket, buffer_start, diff, MSG_DONTWAIT);
+        if (0 > result) {
+            VERIFY_CONDITION(EWOULDBLOCK == errno, errors, RECV_NO_WAIT_FAILED, "Failed receving data 11\n");
+            return errors;
+        }
+        if (0 == result) {
+            return CLIENT_DISCONNECTED;
+        }
+    }
+
+    errors = send_msg(user_index, command_data->user_name, command_data->msg_data);
+    clear_user_command(user_index);
+cleanup:
+    return errors;
+}
+
+error_code get_read_msgs_params(int user_index) {
+    error_code errors = read_msgs(user_index);
+    clear_user_command(user_index);
+    return errors;
+}
+
 void read_socket_and_handle(int user_index) {
     error_code errors = SUCCESS;
     bool done_authentication = false;
@@ -595,6 +796,18 @@ void read_socket_and_handle(int user_index) {
         }
         case GET_FILE: {
             errors = get_get_file_params(user_index);
+            break;
+        }
+        case ONLINE_USERS: {
+            errors = get_online_users_params(user_index);
+            break;
+        }
+        case SEND_MSG: {
+            errors = get_send_msg_params(user_index);
+            break;
+        }
+        case READ_MSGS: {
+            errors = get_read_msgs_params(user_index);
             break;
         }
         case INVALID_COMMAND: {

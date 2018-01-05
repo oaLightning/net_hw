@@ -37,6 +37,7 @@ typedef enum {
 	SETOPT_FAILURE,
 	RECV_NO_WAIT_FAILED,
 	CLIENT_DISCONNECTED,
+	UNKOWN_USER_FOR_MESSAGE,
 } error_code;
 
 #define VERIFY_SUCCESS(error_code)          \
