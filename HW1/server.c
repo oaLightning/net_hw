@@ -461,7 +461,6 @@ cleanup:
 
 void cleanup_client(int user_index) {
     close(user_list[user_index].socket);
-    printf("Removing user %d\n", user_index);
     zero_user_data(&(user_list[user_index]));
 }
 
@@ -548,8 +547,17 @@ cleanup:
     return errors;
 }
 
+error_code send_answering(int user_index) {
+    return send_error_code(user_list[user_index].socket, ANSWER_MAGIC);
+}
+
 error_code get_list_files_params(int user_index) {
-    error_code errors = list_files(user_index);
+    error_code errors = send_answering(user_index);
+    VERIFY_SUCCESS(errors);
+
+    errors = list_files(user_index);
+
+cleanup:
     clear_user_command(user_index);
     return errors;
 }
@@ -583,9 +591,16 @@ error_code get_delete_file_params(int user_index) {
             return CLIENT_DISCONNECTED;
         }
     }
+    errors = send_answering(user_index);
+    if (SUCCESS != errors) {
+        clear_user_command(user_index);
+    }
+    VERIFY_SUCCESS(errors);
+
     errors = delete_file(user_index, command_data->file_name);
     clear_user_command(user_index);
 cleanup:
+
     return errors;
 }
 
@@ -646,6 +661,12 @@ error_code get_add_file_params(int user_index) {
         }
     }
 
+    errors = send_answering(user_index);
+    if (SUCCESS != errors) {
+        clear_user_command(user_index);
+    }
+    VERIFY_SUCCESS(errors);
+
     errors = add_file(user_index, command_data->file_name, command_data->file_data, command_data->data_length);
     clear_user_command(user_index);
 cleanup:
@@ -681,15 +702,28 @@ error_code get_get_file_params(int user_index) {
             return CLIENT_DISCONNECTED;
         }
     }
-    errors = get_file(user_index, command_data->file_name);
+
+    errors = send_answering(user_index);
+    if (SUCCESS != errors) {
+        clear_user_command(user_index);
+    }
+    VERIFY_SUCCESS(errors);
+
     clear_user_command(user_index);
 cleanup:
     return errors;
 }
 
 error_code get_online_users_params(int user_index) {
-    error_code errors = online_users(user_index);
+    error_code errors = send_answering(user_index);
+    if (SUCCESS != errors) {
+        clear_user_command(user_index);
+    }
+    VERIFY_SUCCESS(errors);
+
+    errors = online_users(user_index);
     clear_user_command(user_index);
+cleanup:
     return errors;
 }
 
@@ -746,6 +780,12 @@ error_code get_send_msg_params(int user_index) {
         }
     }
 
+    errors = send_answering(user_index);
+    if (SUCCESS != errors) {
+        clear_user_command(user_index);
+    }
+    VERIFY_SUCCESS(errors);
+
     errors = send_msg(user_index, command_data->user_name, command_data->msg_data);
     clear_user_command(user_index);
 cleanup:
@@ -753,8 +793,15 @@ cleanup:
 }
 
 error_code get_read_msgs_params(int user_index) {
-    error_code errors = read_msgs(user_index);
+    error_code  errors = send_answering(user_index);
+    if (SUCCESS != errors) {
+        clear_user_command(user_index);
+    }
+    VERIFY_SUCCESS(errors);
+
+    errors = read_msgs(user_index);
     clear_user_command(user_index);
+cleanup:
     return errors;
 }
 

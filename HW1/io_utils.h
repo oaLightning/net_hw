@@ -22,8 +22,8 @@ typedef enum {
     INVALID_COMMAND = -1,
 } command_type; 
 
-#define MSG_MAGIC  (0x4D534731) // This is "MSG1"
-#define END_MSG_MAGIC (0x4445) // This is "DE" (short for "D end")
+// Note - This isn't in the error_codes enum because unlike the error codes it's only 2 bytes
+#define END_MSG_MAGIC (0x4445) // "DE" -> "D end" -> "The end"
 
 #define GREETING_MESSAGE ("Welcome! Please log in")
 #define LOGIN_ERROR_MESSAGE ("User or password incorrect, terminating")

@@ -46,6 +46,50 @@ void make_last_word(char* word) {
     }
 }
 
+error_code recv_and_print_msg(bool validate_magic) {
+    char sender_name[MAX_USER_LENGTH] = {0};
+    char msg[MAX_MSG_LENGTH] = {0};
+    error_code result = SUCCESS;
+    error_code sent_error = SUCCESS;
+
+    if (validate_magic) {
+        result = recv_error_code(server_connection, &sent_error);
+        VERIFY_SUCCESS(result);
+        VERIFY_CONDITION(MSG_MAGIC == sent_error, result, BAD_SERVER_CONNECTION, "Got unknown message from server without contact\n");
+    }
+
+    result = recv_string(server_connection, &sender_name[0]);
+    VERIFY_SUCCESS(result);
+
+    result = recv_string(server_connection, &msg[0]);
+    VERIFY_SUCCESS(result);
+
+    printf(MSG_FORMAT, sender_name, msg);
+
+cleanup:
+    return result;
+}
+
+error_code wait_for_answer() {
+    error_code recv_result = SUCCESS;
+    error_code sent_error = SUCCESS;
+
+    while (true) {
+        recv_result = recv_error_code(server_connection, &sent_error);
+        VERIFY_SUCCESS(recv_result);
+
+        if (ANSWER_MAGIC == sent_error) {
+            return SUCCESS;
+        }
+        VERIFY_CONDITION(MSG_MAGIC == sent_error, recv_result, UNKNOWN_MAGIC_2, "Received an unknown magic\n");
+        recv_result = recv_and_print_msg(false);
+        VERIFY_SUCCESS(recv_result);
+    }
+
+cleanup:
+return recv_result;
+}
+
 error_code list_files() {
     error_code error = SUCCESS;
     int number_of_files = 0;
@@ -54,6 +98,9 @@ error_code list_files() {
     command_type command = LIST_FILES;
 
     error = send_all(server_connection, (byte*)&command, sizeof(command));
+    VERIFY_SUCCESS(error);
+
+    error = wait_for_answer();
     VERIFY_SUCCESS(error);
 
     error = recv_all(server_connection, (byte*)&number_of_files, sizeof(number_of_files));
@@ -80,6 +127,9 @@ error_code delete_file(char* file_name) {
     VERIFY_SUCCESS(error);
 
     error = send_string(server_connection, file_name);
+    VERIFY_SUCCESS(error);
+
+    error = wait_for_answer();
     VERIFY_SUCCESS(error);
 
     error = recv_error_code(server_connection, &remote_error);
@@ -120,6 +170,9 @@ error_code add_file(char* path_to_file, char* file_name) {
     result = send_all(server_connection, (byte*)&file_data[0], data_length);
     VERIFY_SUCCESS(result);
 
+    result = wait_for_answer();
+    VERIFY_SUCCESS(result);
+
     result = recv_error_code(server_connection, &remote_result);
     VERIFY_SUCCESS(result);
 
@@ -145,6 +198,9 @@ error_code get_file(char* file_name, char* path_to_save) {
     VERIFY_SUCCESS(send_error);
 
     send_error = send_string(server_connection, file_name);
+    VERIFY_SUCCESS(send_error);
+
+    send_error = wait_for_answer();
     VERIFY_SUCCESS(send_error);
 
     send_error = recv_error_code(server_connection, &remote_read);
@@ -180,6 +236,9 @@ error_code users_online() {
     errors = send_all(server_connection, (byte*)&command, sizeof(command));
     VERIFY_SUCCESS(errors);
 
+    errors = wait_for_answer();
+    VERIFY_SUCCESS(errors);
+
     errors = recv_string(server_connection, &returned_users[0]);
     VERIFY_SUCCESS(errors);
 
@@ -202,6 +261,9 @@ error_code send_msg(char* dest_user, char* msg) {
     errors = send_string(server_connection, msg);
     VERIFY_SUCCESS(errors);
 
+    errors = wait_for_answer();
+    VERIFY_SUCCESS(errors);
+
 cleanup:
     return errors;
 }
@@ -213,6 +275,9 @@ error_code read_msgs() {
     char returned_msg[MAX_FORMATTED_MSG_LENGTH] = {0};
 
     errors = send_all(server_connection, (byte*)&command, sizeof(command));
+    VERIFY_SUCCESS(errors);
+
+    errors = wait_for_answer();
     VERIFY_SUCCESS(errors);
 
     while (true) {
@@ -234,7 +299,7 @@ cleanup:
     return errors;
 }
 
-error_code get_and_execute_command() {
+error_code get_and_execute_user_command() {
     char cmd[MAX_CMD_LENGTH] = {0};
     char* result = NULL;
     int length = 0;
@@ -319,6 +384,35 @@ error_code get_and_execute_command() {
     }
 }
 
+error_code wait_and_respond_to_input() {
+    fd_set input_fds;
+    error_code errors = SUCCESS;
+    int result = 0;
+    // We know stdin is fd 0 so the max fd is the server connection
+    #define STDIN_FD (0)
+
+    while (1) {
+        FD_ZERO(&input_fds);
+        FD_SET(STDIN_FD, &input_fds);
+        FD_SET(server_connection, &input_fds);
+
+        result = select(server_connection+1, &input_fds, 0, 0, 0);
+        VERIFY_CONDITION(-1 != result, errors, SELECT_ERROR, "Got an error during select\n");
+
+        if (FD_ISSET(server_connection, &input_fds)) {
+            errors = recv_and_print_msg(true);
+            VERIFY_SUCCESS(errors);
+        }
+        if (FD_ISSET(STDIN_FD, &input_fds)) {
+            errors = get_and_execute_user_command();
+            VERIFY_SUCCESS(errors);
+        }
+    }
+
+cleanup:
+    return errors;
+}
+
 void talk_to_server() {
     char username[MAX_USER_LENGTH] = {0};
     char password[MAX_USER_LENGTH] = {0};
@@ -354,10 +448,8 @@ void talk_to_server() {
 
     VERIFY_SUCCESS(server_error);
 
-    while (1) {
-        error = get_and_execute_command();
-        VERIFY_SUCCESS(error);
-    }
+    error = wait_and_respond_to_input();
+    VERIFY_SUCCESS(error);
 
 cleanup:
     return;

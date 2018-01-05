@@ -38,6 +38,11 @@ typedef enum {
 	RECV_NO_WAIT_FAILED,
 	CLIENT_DISCONNECTED,
 	UNKOWN_USER_FOR_MESSAGE,
+	BAD_SERVER_CONNECTION,
+	UNKNOWN_MAGIC_2,
+
+	ANSWER_MAGIC = 0x52534C54, // This is "RSLT"
+	MSG_MAGIC = 0x4D534731, // This is "MSG1"
 } error_code;
 
 #define VERIFY_SUCCESS(error_code)          \
